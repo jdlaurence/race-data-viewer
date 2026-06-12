@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Race Split Viewer</title>
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;600;700&family=Barlow+Condensed:wght@600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prop-types/15.8.1/prop-types.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/recharts/2.12.7/Recharts.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+<style>
+  :root{
+    --ink:#10243a; --water:#1f6f8b; --buoy:#e4572e;
+    --grid:#d8e2e8; --paper:#f7fafb; --faint:#6b8295;
+    --water-band:rgba(31,111,139,0.18); --buoy-band:rgba(228,87,46,0.16);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--paper);font-family:'Barlow',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:var(--ink)}
+  .wrap{max-width:900px;margin:0 auto;padding:24px 12px 48px}
+  .card{background:#fff;border:1px solid var(--grid);border-radius:14px;box-shadow:0 2px 10px rgba(16,36,58,.06);overflow:hidden;margin-bottom:16px}
+  .card-head{padding:20px 24px 14px;border-bottom:1px solid var(--grid);display:flex;flex-wrap:wrap;align-items:baseline;gap:8px 18px}
+  .title{font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:24px;letter-spacing:.02em;text-transform:uppercase}
+  .subtitle{font-size:14px;color:var(--faint);font-weight:600}
+  .subtitle b{color:var(--ink)}
+  .footer{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;padding:8px 24px 16px;font-size:12px;color:var(--faint)}
+  details.controls{border:1px solid var(--grid);border-radius:14px;background:#fff;margin-bottom:16px;box-shadow:0 2px 10px rgba(16,36,58,.06)}
+  details.controls>summary{cursor:pointer;padding:14px 20px;font-weight:700;font-size:14px;letter-spacing:.03em;text-transform:uppercase;color:var(--water);list-style:none;display:flex;justify-content:space-between;align-items:center}
+  details.controls>summary::-webkit-details-marker{display:none}
+  details.controls>summary:after{content:'+';font-size:18px;color:var(--faint)}
+  details.controls[open]>summary:after{content:'–'}
+  .controls-body{padding:0 20px 20px;display:grid;gap:18px}
+  .field label{display:block;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--faint);margin-bottom:5px}
+  .field input[type=text],.field input[type=number],.field select,.field textarea{
+    width:100%;border:1px solid var(--grid);border-radius:8px;padding:8px 10px;font-family:'Barlow',sans-serif;
+    font-size:14px;color:var(--ink);background:#fff}
+  .field textarea{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;line-height:1.5;min-height:200px;resize:vertical}
+  .row{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+  .hint{font-size:12px;color:var(--faint);margin-top:6px;line-height:1.5}
+  button.btn{border:1px solid var(--grid);background:#fff;color:var(--ink);border-radius:8px;padding:7px 14px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit}
+  button.btn:hover{border-color:var(--water);color:var(--water)}
+  button.btn.primary{background:var(--ink);color:#fff;border-color:var(--ink)}
+  button.btn.danger:hover{border-color:var(--buoy);color:var(--buoy)}
+  .buffer{border:1px solid var(--grid);border-radius:10px;padding:12px;display:grid;gap:10px;background:#fbfdfe}
+  .buffer .row{grid-template-columns:repeat(auto-fit,minmax(95px,1fr))}
+  .buffer-head{display:flex;justify-content:space-between;align-items:center}
+  .buffer-head .name{font-size:12px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--faint)}
+  .toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .err{color:var(--buoy);font-size:13px;font-weight:600;padding:4px 0}
+  .toggle{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:600;color:var(--ink)}
+  .toggle input{accent-color:var(--water)}
+  .pagehead{display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px;margin:4px 4px 16px}
+  .pagehead h1{font-family:'Barlow Condensed',sans-serif;font-size:28px;margin:0;letter-spacing:.03em;text-transform:uppercase}
+  .pagehead span{font-size:13px;color:var(--faint)}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+const {ComposedChart, Line, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
+       ReferenceLine, ReferenceArea, ResponsiveContainer} = Recharts;
+const {useState, useMemo, useEffect, useRef} = React;
+
+/* ---------- formatting & parsing ---------- */
+const parseSplitStr = (s) => {
+  if (s == null) return null;
+  s = String(s).trim();
+  const m = s.match(/^(\d+):(\d+(?:\.\d+)?)$/);
+  if (m) return parseInt(m[1]) * 60 + parseFloat(m[2]);
+  const f = parseFloat(s);
+  return isNaN(f) ? null : f;
+};
+const fmtSplit = (sec, dec = 1) => {
+  if (sec == null || isNaN(sec)) return "–";
+  const m = Math.floor(sec / 60);
+  let r = (sec - m * 60).toFixed(dec);
+  if (parseFloat(r) < 10) r = "0" + r;
+  return `${m}:${r}`;
+};
+const fmtClock = (sec) => {
+  const m = Math.floor(sec / 60);
+  let r = (sec - m * 60).toFixed(1);
+  if (parseFloat(r) < 10) r = "0" + r;
+  return `${m}:${r}`;
+};
+const isTimeTok = (t) => /^\d+:\d+(\.\d+)?$/.test(t);
+
+/* Parse pasted data. Accepts per line:
+   3 cols: meters  split  spm                  (e.g. "100 1:32.0 36.7")
+   4 cols: meters  cumTime  split  spm         (raw SpeedCoach paste)
+   Marks may be segment starts or ends (auto: 4-col => ends). */
+function parseData(text, markMode) {
+  const rows = []; let sawFourCol = false;
+  for (const raw of text.split(/\n+/)) {
+    const toks = raw.trim().split(/[,;\t ]+/).filter(Boolean);
+    if (toks.length < 3) continue;
+    const m = parseFloat(String(toks[0]).replace(/m$/i, ""));
+    if (isNaN(m)) continue;
+    let split, spm;
+    if (toks.length >= 4 && isTimeTok(toks[1]) && isTimeTok(toks[2])) {
+      sawFourCol = true; split = parseSplitStr(toks[2]); spm = parseFloat(toks[3]);
+    } else {
+      split = parseSplitStr(toks[1]); spm = parseFloat(toks[2]);
+    }
+    if (split == null || isNaN(spm)) continue;
+    rows.push({m, split, spm});
+  }
+  rows.sort((a, b) => a.m - b.m);
+  if (rows.length < 2) return {segments: [], error: rows.length ? "Need at least 2 data rows." : null};
+  const ends = markMode === "ends" || (markMode === "auto" && sawFourCol);
+  const segments = [];
+  if (ends) {
+    let prev = 0;
+    for (const r of rows) { segments.push({start: prev, end: r.m, split: r.split, spm: r.spm}); prev = r.m; }
+  } else {
+    for (let i = 0; i < rows.length; i++) {
+      const end = i + 1 < rows.length ? rows[i + 1].m
+                : rows[i].m + (rows[i].m - rows[i - 1].m);
+      segments.push({start: rows[i].m, end, split: rows[i].split, spm: rows[i].spm});
+    }
+  }
+  return {segments, error: segments.some(s => s.end <= s.start) ? "Distances must be increasing." : null};
+}
+
+/* ---------- chart data assembly ---------- */
+function resolveBuffer(b) {
+  const sMin = parseSplitStr(b.splitMin), sMax = parseSplitStr(b.splitMax);
+  const rMin = parseFloat(b.rateMin), rMax = parseFloat(b.rateMax);
+  const from = parseFloat(b.from), to = parseFloat(b.to);
+  if ([sMin, sMax].some(v => v == null) || [rMin, rMax, from, to].some(v => isNaN(v)) || to <= from) return null;
+  return {from, to, splitBand: [Math.min(sMin, sMax), Math.max(sMin, sMax)],
+          spmBand: [Math.min(rMin, rMax), Math.max(rMin, rMax)], label: `${from}–${to}m`};
+}
+
+function buildChartData(segments, buffers) {
+  const resolved = buffers.map(resolveBuffer).filter(Boolean);
+  const masked = (s) => resolved.some(b => s.start >= b.from && s.end <= b.to);
+  const measured = segments.filter(s => !masked(s));
+  const pts = new Map();
+  const at = (x) => { if (!pts.has(x)) pts.set(x, {m: x}); return pts.get(x); };
+  measured.forEach(s => { const p = at(s.start); p.split = s.split; p.spm = s.spm; p.segEnd = s.end; });
+  resolved.forEach(b => {
+    const collapse = (p, s) => { p.splitBand = [s.split, s.split]; p.spmBand = [s.spm, s.spm]; p.bufLabel = p.bufLabel || null; };
+    const wide = (x) => { const p = at(x); p.splitBand = b.splitBand; p.spmBand = b.spmBand; p.bufLabel = b.label; p.buf = b; };
+    const leftA = measured.filter(s => s.start <= b.from).pop();
+    const rightA = measured.find(s => s.start >= b.to);
+    if (leftA && leftA.start < b.from) collapse(at(leftA.start), leftA);
+    if (leftA && leftA.start === b.from) collapse(at(b.from), leftA); else wide(b.from);
+    if (rightA && rightA.start === b.to) collapse(at(b.to), rightA);
+    else { wide(b.to); if (rightA) collapse(at(rightA.start), rightA); }
+  });
+  const data = [...pts.values()].sort((a, b) => a.m - b.m);
+  return {data, resolved, measured};
+}
+
+/* ---------- quarter summaries ---------- */
+function computeQuarters(segments, boundsStr, buffers) {
+  const totalEnd = segments.length ? segments[segments.length - 1].end : 0;
+  const bounds = boundsStr.split(/[, ]+/).map(parseFloat).filter(v => !isNaN(v) && v > 0 && v < totalEnd).sort((a, b) => a - b);
+  if (!bounds.length || !segments.length) return [];
+  const edges = [0, ...bounds, totalEnd];
+  const resolved = buffers.map(resolveBuffer).filter(Boolean);
+  const out = [];
+  for (let i = 0; i + 1 < edges.length; i++) {
+    const a = edges[i], b = edges[i + 1];
+    let time = 0, spmTime = 0;
+    for (const s of segments) {
+      const ov = Math.max(0, Math.min(b, s.end) - Math.max(a, s.start));
+      if (!ov) continue;
+      const t = s.split / 500 * ov;
+      time += t; spmTime += s.spm * t;
+    }
+    const est = resolved.some(buf => Math.max(a, buf.from) < Math.min(b, buf.to));
+    out.push({x1: a, x2: b, name: `Q${i + 1}`, range: `${a}–${b}m`,
+              split: time / (b - a) * 500, spm: spmTime / time, est});
+  }
+  return out;
+}
+
+/* ---------- defaults (the 4− TT example) ---------- */
+const DEFAULT_DATA = `0    1:30.7  37.7
+100  1:32.0  36.7
+200  1:34.5  36.2
+300  1:37.0  36.1
+400  1:37.5  36.2
+500  1:37.0  35.8
+600  1:37.5  35.8
+700  1:38.5  35.9
+800  1:39.0  35.7
+900  1:38.8  35.6
+1000 1:37.5  35.7
+1100 1:37.5  36.0
+1200 1:38.5  36.1
+1300 1:39.8  35.9
+1400 1:39.5  35.6
+1500 1:37.0  36.1
+1600 1:35.5  37.0
+1700 1:35.8  37.4
+1800 1:34.7  38.3`;
+
+const DEFAULT_STATE = {
+  title: "4− Time Trial · Youth Nationals",
+  officialTime: "6:09.2",
+  dataText: DEFAULT_DATA,
+  markMode: "auto",
+  quarterBounds: "400, 900, 1400",
+  buffers: [
+    {from: 0, to: 100, splitMin: "1:29.5", splitMax: "1:32.0", rateMin: 36.7, rateMax: 38.6},
+    {from: 1800, to: 1900, splitMin: "1:33.5", splitMax: "1:35.8", rateMin: 37.4, rateMax: 39.2},
+  ],
+};
+
+const encodeState = (s) => btoa(unescape(encodeURIComponent(JSON.stringify(s))));
+const decodeState = (h) => JSON.parse(decodeURIComponent(escape(atob(h))));
+
+/* ---------- chart sub-components ---------- */
+const C = {ink:"#10243a", water:"#1f6f8b", waterBand:"rgba(31,111,139,0.18)",
+           buoy:"#e4572e", buoyBand:"rgba(228,87,46,0.16)", grid:"#d8e2e8", faint:"#6b8295"};
+
+function QuarterLabel({viewBox, q, compact}) {
+  const cx = viewBox.x + viewBox.width / 2;
+  return (
+    <text textAnchor="middle" fontFamily="'Barlow', sans-serif">
+      <tspan x={cx} y={viewBox.y + 14} fontSize={10} fontWeight={600} fill={C.faint} letterSpacing="0.06em">
+        {q.name}{compact ? "" : ` · ${q.range}`}
+      </tspan>
+      <tspan x={cx} y={viewBox.y + 28} fontSize={12} fontWeight={700} fill={C.ink}>
+        {q.est ? "~" : ""}{fmtSplit(q.split)}{compact ? "" : ` @ ${q.spm.toFixed(1)}`}
+      </tspan>
+    </text>
+  );
+}
+
+const tooltipStyle = {background:"#10243a", color:"#fff", padding:"10px 14px", borderRadius:8,
+  fontSize:13, lineHeight:1.6, fontFamily:"'Barlow', sans-serif",
+  boxShadow:"0 4px 14px rgba(16,36,58,0.35)", maxWidth:240};
+
+function makeTooltip(chartData) {
+  return function CustomTooltip({active, label}) {
+    if (!active) return null;
+    const row = chartData.find(d => d.m === label);
+    if (!row) return null;
+    if (row.split != null) {
+      return (
+        <div style={tooltipStyle}>
+          <div style={{fontWeight:700, letterSpacing:"0.04em", marginBottom:2}}>{row.m}–{row.segEnd}m</div>
+          <div style={{color:"#9fd4e8"}}>Split: {fmtSplit(row.split)} /500m</div>
+          <div style={{color:"#ffb59e"}}>Rate: {row.spm.toFixed(1)} spm</div>
+        </div>
+      );
+    }
+    if (row.buf) {
+      return (
+        <div style={tooltipStyle}>
+          <div style={{fontWeight:700, letterSpacing:"0.04em", marginBottom:2}}>{row.bufLabel} · estimated</div>
+          <div style={{color:"#9fd4e8"}}>Split: {fmtSplit(row.buf.splitBand[0])}–{fmtSplit(row.buf.splitBand[1])}</div>
+          <div style={{color:"#ffb59e"}}>Rate: {row.buf.spmBand[0].toFixed(1)}–{row.buf.spmBand[1].toFixed(1)} spm</div>
+          <div style={{color:"#8aa3b5", fontSize:11, marginTop:4}}>Uncertainty buffer — true values assumed within this range.</div>
+        </div>
+      );
+    }
+    return null;
+  };
+}
+
+/* ---------- main app ---------- */
+function App() {
+  const initial = useMemo(() => {
+    try {
+      if (location.hash.startsWith("#data=")) return {...DEFAULT_STATE, ...decodeState(location.hash.slice(6))};
+    } catch (e) {}
+    return DEFAULT_STATE;
+  }, []);
+
+  const [title, setTitle] = useState(initial.title);
+  const [officialTime, setOfficialTime] = useState(initial.officialTime);
+  const [dataText, setDataText] = useState(initial.dataText);
+  const [markMode, setMarkMode] = useState(initial.markMode);
+  const [quarterBounds, setQuarterBounds] = useState(initial.quarterBounds);
+  const [buffers, setBuffers] = useState(initial.buffers);
+  const [showAvg, setShowAvg] = useState(true);
+  const [showQuarters, setShowQuarters] = useState(true);
+  const [chartWidth, setChartWidth] = useState(0);
+  const [copied, setCopied] = useState(false);
+  const fileRef = useRef(null);
+  const cardRef = useRef(null);
+
+  const savePng = async () => {
+    if (!cardRef.current || typeof html2canvas === "undefined") {
+      alert("PNG export unavailable (html2canvas failed to load)."); return;
+    }
+    try {
+      const canvas = await html2canvas(cardRef.current, {
+        scale: 3, backgroundColor: "#ffffff", useCORS: true, logging: false,
+        ignoreElements: (el) => el.classList && el.classList.contains("no-export"),
+      });
+      const a = document.createElement("a");
+      const name = (title || "race-splits").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "race-splits";
+      a.download = name + ".png";
+      a.href = canvas.toDataURL("image/png");
+      a.click();
+    } catch (e) {
+      alert("PNG export failed: " + e.message);
+    }
+  };
+
+  const {segments, error} = useMemo(() => parseData(dataText, markMode), [dataText, markMode]);
+  const {data: chartData, resolved} = useMemo(() => buildChartData(segments, buffers), [segments, buffers]);
+  const quarters = useMemo(() => computeQuarters(segments, quarterBounds, buffers), [segments, quarterBounds, buffers]);
+
+  const stats = useMemo(() => {
+    if (!segments.length) return null;
+    const dist = segments[segments.length - 1].end;
+    const dataTime = segments.reduce((t, s) => t + s.split / 500 * (s.end - s.start), 0);
+    const official = parseSplitStr(officialTime);
+    const total = official != null ? official : dataTime;
+    const spmTime = segments.reduce((t, s) => t + s.spm * s.split / 500 * (s.end - s.start), 0);
+    return {dist, total, official: official != null, avgSplit: total / dist * 500, avgSpm: spmTime / dataTime};
+  }, [segments, officialTime]);
+
+  const domains = useMemo(() => {
+    const splits = [], rates = [];
+    chartData.forEach(d => {
+      if (d.split != null) {splits.push(d.split); rates.push(d.spm);}
+      if (d.splitBand) {splits.push(...d.splitBand); rates.push(...d.spmBand);}
+    });
+    if (stats) splits.push(stats.avgSplit);
+    if (!splits.length) return null;
+    const sLo = Math.floor(Math.min(...splits)) - 1, sHi = Math.ceil(Math.max(...splits)) + 1;
+    const rLo = Math.floor(Math.min(...rates) - 0.5), rHi = Math.ceil(Math.max(...rates) + 0.5);
+    const sTicks = []; for (let t = sLo + 1; t < sHi; t++) sTicks.push(t);
+    const rTicks = []; for (let t = rLo; t <= rHi; t++) rTicks.push(t);
+    return {split: [sLo, sHi], splitTicks: sTicks, rate: [rLo, rHi], rateTicks: rTicks};
+  }, [chartData, stats]);
+
+  const wide = chartWidth >= 700;
+  const xTicks = useMemo(() => {
+    if (!stats) return [];
+    const step = wide ? 100 : 200, ticks = [];
+    for (let x = 0; x <= stats.dist; x += step) ticks.push(x);
+    return ticks;
+  }, [stats, wide]);
+
+  const CustomTooltip = useMemo(() => makeTooltip(chartData), [chartData]);
+
+  const updateBuffer = (i, patch) => setBuffers(bs => bs.map((b, j) => j === i ? {...b, ...patch} : b));
+  const addBuffer = () => {
+    const end = stats ? stats.dist : 1900;
+    setBuffers(bs => [...bs, {from: end - 100, to: end, splitMin: "1:33.0", splitMax: "1:36.0", rateMin: 36, rateMax: 39}]);
+  };
+  const removeBuffer = (i) => setBuffers(bs => bs.filter((_, j) => j !== i));
+
+  const share = () => {
+    const state = {title, officialTime, dataText, markMode, quarterBounds, buffers};
+    const url = location.origin + location.pathname + "#data=" + encodeState(state);
+    try { history.replaceState(null, "", "#data=" + encodeState(state)); } catch (e) {}
+    const done = () => { setCopied(true); setTimeout(() => setCopied(false), 2000); };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(url).then(done, () => prompt("Copy this link:", url));
+    else prompt("Copy this link:", url);
+  };
+
+  const onFile = (e) => {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    const r = new FileReader();
+    r.onload = () => setDataText(String(r.result));
+    r.readAsText(f);
+    e.target.value = "";
+  };
+
+  return (
+    <div className="wrap">
+      <div className="pagehead">
+        <h1>Race Split Viewer</h1>
+        <span>per-100m splits & stroke rate with honest uncertainty</span>
+      </div>
+
+      <details className="controls">
+        <summary>Data & Settings</summary>
+        <div className="controls-body">
+          <div className="row">
+            <div className="field" style={{gridColumn: "1 / -1"}}>
+              <label>Race title</label>
+              <input type="text" value={title} onChange={e => setTitle(e.target.value)} />
+            </div>
+            <div className="field">
+              <label>Official time (optional)</label>
+              <input type="text" value={officialTime} placeholder="6:09.2" onChange={e => setOfficialTime(e.target.value)} />
+            </div>
+            <div className="field">
+              <label>Distance marks are</label>
+              <select value={markMode} onChange={e => setMarkMode(e.target.value)}>
+                <option value="auto">Auto-detect</option>
+                <option value="starts">Segment starts</option>
+                <option value="ends">Segment ends (SpeedCoach)</option>
+              </select>
+            </div>
+            <div className="field">
+              <label>Quarter boundaries (m)</label>
+              <input type="text" value={quarterBounds} placeholder="400, 900, 1400" onChange={e => setQuarterBounds(e.target.value)} />
+            </div>
+          </div>
+
+          <div className="field">
+            <label>Segment data — one per line: meters · split · spm (or paste raw SpeedCoach rows: meters · time · split · spm)</label>
+            <textarea value={dataText} onChange={e => setDataText(e.target.value)} spellCheck={false} />
+            <div className="hint">
+              Splits as <b>1:32.0</b> or seconds. Separators: spaces, tabs, or commas — a spreadsheet paste works.
+              {error && <div className="err">{error}</div>}
+            </div>
+          </div>
+
+          <div>
+            <div className="field"><label>Uncertainty buffers</label></div>
+            <div style={{display: "grid", gap: 10}}>
+              {buffers.map((b, i) => (
+                <div className="buffer" key={i}>
+                  <div className="buffer-head">
+                    <span className="name">Buffer {i + 1}</span>
+                    <button className="btn danger" onClick={() => removeBuffer(i)}>Remove</button>
+                  </div>
+                  <div className="row">
+                    <div className="field"><label>From (m)</label>
+                      <input type="number" step="50" value={b.from} onChange={e => updateBuffer(i, {from: e.target.value})} /></div>
+                    <div className="field"><label>To (m)</label>
+                      <input type="number" step="50" value={b.to} onChange={e => updateBuffer(i, {to: e.target.value})} /></div>
+                    <div className="field"><label>Split fast</label>
+                      <input type="text" value={b.splitMin} onChange={e => updateBuffer(i, {splitMin: e.target.value})} /></div>
+                    <div className="field"><label>Split slow</label>
+                      <input type="text" value={b.splitMax} onChange={e => updateBuffer(i, {splitMax: e.target.value})} /></div>
+                    <div className="field"><label>Rate low</label>
+                      <input type="number" step="0.1" value={b.rateMin} onChange={e => updateBuffer(i, {rateMin: e.target.value})} /></div>
+                    <div className="field"><label>Rate high</label>
+                      <input type="number" step="0.1" value={b.rateMax} onChange={e => updateBuffer(i, {rateMax: e.target.value})} /></div>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="hint" style={{marginBottom: 8}}>
+              Segments fully inside a buffer are hidden from the solid line and replaced by a shaded range that
+              tapers into the nearest measured points. To make a buffer one-sided, set its slow edge to the
+              adjacent measured value.
+            </div>
+            <div className="toolbar">
+              <button className="btn" onClick={addBuffer}>+ Add buffer</button>
+              <button className="btn" onClick={() => fileRef.current && fileRef.current.click()}>Upload file…</button>
+              <input ref={fileRef} type="file" accept=".csv,.txt,.tsv" style={{display: "none"}} onChange={onFile} />
+              <button className="btn primary" onClick={share}>{copied ? "Link copied ✓" : "Copy share link"}</button>
+              <button className="btn" onClick={() => {
+                setTitle(DEFAULT_STATE.title); setOfficialTime(DEFAULT_STATE.officialTime);
+                setDataText(DEFAULT_STATE.dataText); setMarkMode(DEFAULT_STATE.markMode);
+                setQuarterBounds(DEFAULT_STATE.quarterBounds); setBuffers(DEFAULT_STATE.buffers);
+              }}>Reset to example</button>
+            </div>
+          </div>
+        </div>
+      </details>
+
+      {stats && domains && (
+        <div className="card" ref={cardRef}>
+          <div className="card-head">
+            <div className="title">{title || "Untitled race"}</div>
+            <div className="subtitle">
+              {stats.dist}m · <b>{fmtClock(stats.total)}</b>{stats.official ? "" : " (from splits)"} · avg <b>{fmtSplit(stats.avgSplit)}</b> @ ~{stats.avgSpm.toFixed(1)}
+            </div>
+          </div>
+
+          <div style={{padding: "18px 8px 6px 0", height: 470}}>
+            <ResponsiveContainer width="100%" height="100%" onResize={(w) => setChartWidth(w || 0)}>
+              <ComposedChart data={chartData} margin={{top: showQuarters && quarters.length ? 36 : 12, right: 14, bottom: 6, left: 10}}>
+                <CartesianGrid stroke={C.grid} strokeDasharray="2 4" vertical={false} />
+                <XAxis dataKey="m" type="number" domain={[0, stats.dist]} ticks={xTicks}
+                  tick={{fontSize: 12, fill: C.faint}} tickLine={false} axisLine={{stroke: C.grid}}
+                  label={{value: "Race meters", position: "insideBottom", offset: -2, fontSize: 12, fill: C.faint}} />
+                <YAxis yAxisId="split" domain={domains.split} reversed ticks={domains.splitTicks}
+                  tickFormatter={(v) => fmtSplit(v, 0)} tick={{fontSize: 12, fill: C.water, fontWeight: 600}}
+                  tickLine={false} axisLine={false} width={52}
+                  label={{value: "/500m (up = faster)", angle: -90, position: "insideLeft", offset: 8, fontSize: 12, fill: C.water}} />
+                <YAxis yAxisId="rate" orientation="right" domain={domains.rate} ticks={domains.rateTicks}
+                  tick={{fontSize: 12, fill: C.buoy, fontWeight: 600}} tickLine={false} axisLine={false} width={40}
+                  label={{value: "Stroke rate (spm)", angle: 90, position: "insideRight", offset: 6, fontSize: 12, fill: C.buoy}} />
+                <Tooltip content={<CustomTooltip />} />
+                <Legend verticalAlign="top" height={30}
+                  payload={[
+                    {value: "Split /500m", type: "line", color: C.water},
+                    {value: "Stroke rate", type: "line", color: C.buoy},
+                    {value: "Uncertainty", type: "rect", color: "rgba(16,36,58,0.25)"},
+                  ]}
+                  formatter={(v) => <span style={{color: C.ink, fontSize: 13, fontWeight: 600}}>{v}</span>} />
+
+                {showAvg && (
+                  <ReferenceLine yAxisId="split" y={stats.avgSplit} stroke={C.water} strokeDasharray="6 5" strokeOpacity={0.55}
+                    label={{value: `avg ${fmtSplit(stats.avgSplit)}`, position: "insideBottomRight", fontSize: 11, fill: C.water}} />
+                )}
+
+                {showQuarters && quarters.slice(0, -1).map(q => (
+                  <ReferenceLine key={`d-${q.x2}`} yAxisId="split" x={q.x2} stroke={C.grid} strokeDasharray="3 4" />
+                ))}
+                {showQuarters && quarters.map(q => (
+                  <ReferenceArea key={q.name} yAxisId="split" x1={q.x1} x2={q.x2} fill="transparent" stroke="none"
+                    label={(props) => <QuarterLabel {...props} q={q} compact={!wide} />} />
+                ))}
+
+                <Area yAxisId="split" dataKey="splitBand" stroke="none" fill={C.waterBand}
+                  connectNulls={false} legendType="none" activeDot={false} isAnimationActive={false} />
+                <Area yAxisId="rate" dataKey="spmBand" stroke="none" fill={C.buoyBand}
+                  connectNulls={false} legendType="none" activeDot={false} isAnimationActive={false} />
+
+                <Line yAxisId="split" type="monotone" dataKey="split" name="Split /500m" stroke={C.water}
+                  strokeWidth={3} dot={{r: 3, fill: C.water, strokeWidth: 0}} activeDot={{r: 5}} connectNulls={false} />
+                <Line yAxisId="rate" type="monotone" dataKey="spm" name="Stroke rate" stroke={C.buoy}
+                  strokeWidth={2.5} dot={{r: 3, fill: C.buoy, strokeWidth: 0}} activeDot={{r: 5}} connectNulls={false} />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
+
+          <div className="footer">
+            <span>
+              Solid lines: measured segments, plotted at segment start. Shaded: uncertainty buffers
+              {quarters.length ? "; quarter summaries marked ~ include buffered segments" : ""}.
+            </span>
+            <span className="no-export" style={{display: "flex", gap: 10, alignItems: "center", flexShrink: 0}}>
+              <label className="toggle"><input type="checkbox" checked={showQuarters} onChange={e => setShowQuarters(e.target.checked)} /> Quarters</label>
+              <label className="toggle"><input type="checkbox" checked={showAvg} onChange={e => setShowAvg(e.target.checked)} /> Avg split</label>
+              <button className="btn" onClick={savePng}>Save PNG</button>
+            </span>
+          </div>
+        </div>
+      )}
+
+      {!stats && <div className="card"><div style={{padding: 24, color: "var(--faint)"}}>Enter at least two rows of data to render the plot.</div></div>}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
